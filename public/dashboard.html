@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wichtelrad</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <h1>🎁 Dein Wichtelpartner</h1>
+    <div class="row">
+      <div class="card" id="wheelCard">
+        <canvas id="wheelCanvas" width="420" height="420"></canvas>
+        <div style="margin-top:12px">
+          <button id="spinBtn">Drehen</button>
+          <button id="logoutBtn" style="background:#444; margin-left:8px">Abmelden</button>
+        </div>
+        <p id="result" class="small" style="margin-top:10px"></p>
+      </div>
+
+      <div class="card" id="infoCard">
+        <h3 id="welcome">Willkommen</h3>
+        <p class="small">Das Glücksrad zeigt die möglichen Kandidaten an. Du kannst nicht dich selbst oder deinen Lebenspartner ziehen.</p>
+        <h4>Verfügbare Kandidaten</h4>
+        <ul id="candidatesList"></ul>
+      </div>
+    </div>
+  </main>
+
+<script>
+let users = [];
+let me = null;
+async function fetchMe(){ const r = await fetch("/api/me"); me = await r.json(); return me; }
+async function loadCandidates(){
+  const res = await fetch("/api/users");
+  users = await res.json();
+  const list = document.getElementById("candidatesList");
+  list.innerHTML = "";
+  users.forEach(u=>{
+    const li = document.createElement("li"); li.textContent = u.name; li.dataset.id = u.id;
+    list.appendChild(li);
+  });
+}
+
+// wheel drawing & spin
+const canvas = document.getElementById("wheelCanvas");
+const ctx = canvas.getContext("2d");
+const cx = canvas.width/2, cy = canvas.height/2, radius = Math.min(cx,cy)-8;
+let sectors = []; // {id,name}
+function buildSectors(){
+  // build candidate list: exclude me and my partner and those already drawn by others
+  const filterRes = users.filter(u => u.id != me.id && u.id != (me.partnerId || 0));
+  sectors = filterRes.map(u => ({id:u.id, name:u.name}));
+  drawWheel();
+}
+function drawWheel(){
+  const n = sectors.length;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (n === 0) {
+    ctx.fillStyle = "#222";
+    ctx.font = "16px sans-serif";
+    ctx.fillText("Keine Kandidaten verfügbar", cx-80, cy);
+    return;
+  }
+  const angle = 2*Math.PI/n;
+  for(let i=0;i<n;i++){
+    const start = i*angle, end = start + angle;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,radius,start,end);
+    ctx.closePath();
+    ctx.fillStyle = i%2===0 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)";
+    ctx.fill();
+    // text
+    ctx.save();
+    ctx.translate(cx,cy);
+    ctx.rotate(start + angle/2);
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#fff";
+    ctx.font = "14px sans-serif";
+    ctx.fillText(sectors[i].name, radius-10, 6);
+    ctx.restore();
+  }
+  // center
+  ctx.beginPath(); ctx.arc(cx,cy,40,0,2*Math.PI); ctx.fillStyle="#071820"; ctx.fill();
+  ctx.fillStyle="#fff"; ctx.textAlign="center"; ctx.font="bold 16px sans-serif"; ctx.fillText("Wichtel", cx, cy+6);
+  // pointer
+  ctx.fillStyle = "#ffefef";
+  ctx.beginPath(); ctx.moveTo(cx, cy-radius-18); ctx.lineTo(cx-10, cy-radius-4); ctx.lineTo(cx+10, cy-radius-4); ctx.closePath(); ctx.fill();
+}
+
+let spinning = false;
+function spinAnimation(callback){
+  if (sectors.length===0) { alert("Keine Kandidaten verfügbar."); return; }
+  if (spinning) return;
+  spinning = true;
+  const spins = 3 + Math.random()*3; // random spins
+  const targetIndex = Math.floor(Math.random()*sectors.length);
+  // We'll get actual chosen partner from server to ensure persistence; animate to a random sector then snap
+  let start = performance.now();
+  const duration = 4000;
+  function frame(t){
+    const elapsed = t-start;
+    const progress = Math.min(1, elapsed/duration);
+    const eased = 1 - Math.pow(1-progress, 3);
+    const angle = (spins + eased)*(2*Math.PI) ;
+    // rotate canvas using CSS transform
+    canvas.style.transform = `rotate(${angle}rad)`;
+    if (progress < 1) requestAnimationFrame(frame);
+    else {
+      // finalize: request server for the real draw result
+      callback().then(chosen=>{
+        // find index in sectors
+        const idx = sectors.findIndex(s=>s.id==chosen.id);
+        if (idx>=0) {
+          // rotate so that chosen sector lands at top (pointer)
+          const finalAngle = - (idx * (2*Math.PI/sectors.length)) - (Math.PI/sectors.length);
+          canvas.style.transition = "transform 1s ease-out";
+          canvas.style.transform = `rotate(${finalAngle}rad)`;
+          setTimeout(()=>{ canvas.style.transition=""; spinning=false; document.getElementById("result").textContent = "Dein Wichtelpartner: "+chosen.name; }, 1000);
+        } else {
+          spinning=false;
+          document.getElementById("result").textContent = "Gezogener Partner: "+chosen.name;
+        }
+      }).catch(e=>{
+        spinning=false;
+        alert("Ziehen fehlgeschlagen: "+(e.message||e));
+      });
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+document.getElementById("spinBtn").addEventListener("click", async ()=>{
+  spinAnimation(async ()=>{
+    const r = await fetch("/api/draw", { method: "POST" });
+    if (!r.ok) throw new Error((await r.json()).error || "Fehler");
+    return r.json();
+  });
+});
+
+document.getElementById("logoutBtn").addEventListener("click", async ()=>{
+  await fetch("/api/logout", { method: "POST" });
+  window.location.href = "/";
+});
+
+(async function init(){
+  await fetchMe();
+  if (!me) { window.location.href = "/"; return; }
+  document.getElementById("welcome").textContent = "Hallo " + me.name;
+  await loadCandidates();
+  // enrich users with partner/drawn info
+  const res = await fetch("/api/admin/users").catch(()=>null);
+  if (res && res.ok){
+    const rows = await res.json();
+    // map extra fields back to users
+    users = users.map(u => {
+      const r = rows.find(x=>x.id==u.id);
+      if (r){ u.partnerId = r.partnerId; u.drawnId = r.drawnId; }
+      return u;
+    });
+    // update me
+    const my = users.find(x=>x.id==me.id);
+    if (my){ me.partnerId = my.partnerId; me.drawnId = my.drawnId; }
+  }
+  buildSectors();
+})();
+</script>
+</body>
+</html>

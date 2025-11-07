@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Familien Wichteln - Login</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <h1>🎄 Familien Wichteln</h1>
+    <p>Wähle deinen Namen aus der Liste. Für Admin wähle <strong>Admin</strong> und gib das Passwort <code>admin</code> ein.</p>
+
+    <form id="loginForm">
+      <label for="userSelect">Dein Name</label>
+      <select id="userSelect" name="id"></select>
+
+      <div id="adminPassword" style="display:none;">
+        <label for="password">Admin-Passwort</label>
+        <input id="password" name="password" type="password" placeholder="Admin Passwort">
+      </div>
+
+      <button type="submit">Einloggen</button>
+    </form>
+
+    <p class="hint">Wenn du das erste Mal hier bist, bitte den Admin bitten, Teilnehmer hinzuzufügen.</p>
+  </main>
+
+<script>
+async function loadUsers(){
+  const res = await fetch("/api/users");
+  const users = await res.json();
+  const sel = document.getElementById("userSelect");
+  sel.innerHTML = "";
+  const optAdmin = document.createElement("option");
+  optAdmin.value = "admin";
+  optAdmin.textContent = "Admin";
+  sel.appendChild(optAdmin);
+  users.forEach(u=>{
+    const o = document.createElement("option");
+    o.value = u.id;
+    o.textContent = u.name;
+    sel.appendChild(o);
+  });
+}
+document.addEventListener("DOMContentLoaded", async ()=>{
+  await loadUsers();
+  const sel = document.getElementById("userSelect");
+  sel.addEventListener("change", ()=>{
+    const p = document.getElementById("adminPassword");
+    p.style.display = sel.value === "admin" ? "block" : "none";
+  });
+
+  document.getElementById("loginForm").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    const data = new FormData(e.target);
+    const body = { id: data.get("id") };
+    if (body.id === "admin") body.password = document.getElementById("password").value;
+    const res = await fetch("/api/login", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    if (res.ok) {
+      const j = await res.json();
+      window.location.href = j.isAdmin ? "admin.html" : "dashboard.html";
+    } else {
+      const err = await res.json().catch(()=>({error:"Fehler"}));
+      alert("Login fehlgeschlagen: "+(err.error||""));
+    }
+  });
+});
+</script>
+</body>
+</html>

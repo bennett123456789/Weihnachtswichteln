@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin - Wichtelverwaltung</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <h1>🔧 Admin: Teilnehmer verwalten</h1>
+    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap">
+      <div class="card" style="min-width:320px">
+        <h3>Teilnehmer hinzufügen</h3>
+        <form id="addForm">
+          <input name="name" placeholder="Name">
+          <button type="submit">Hinzufügen</button>
+        </form>
+        <p class="small">Achtung: Doppelte Namen vermeiden.</p>
+      </div>
+
+      <div class="card" style="min-width:420px">
+        <h3>Teilnehmer & Paare</h3>
+        <table id="usersTable"><thead><tr><th>Name</th><th>Partner</th><th>Aktionen</th></tr></thead><tbody></tbody></table>
+        <div style="margin-top:10px">
+          <button id="resetBtn" style="background:#444">Ziehungen zurücksetzen (neues Jahr)</button>
+          <button id="logoutBtn" style="background:#666; margin-left:8px">Abmelden</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+<script>
+async function loadUsers(){
+  const r = await fetch("/api/admin/users");
+  if (!r.ok) { alert("Admin-Daten nicht verfügbar"); window.location.href = "/"; return; }
+  const rows = await r.json();
+  const tbody = document.querySelector("#usersTable tbody");
+  tbody.innerHTML = "";
+  for(const u of rows){
+    const tr = document.createElement("tr");
+    const partner = rows.find(x=>x.id==u.partnerId);
+    tr.innerHTML = `<td>${u.name}${u.drawnId? " ✅":" "}</td>
+                    <td>${partner?partner.name:"—"}</td>
+                    <td>
+                      <button data-id="${u.id}" class="del">Löschen</button>
+                      <button data-id="${u.id}" class="pair">Als Partner setzen</button>
+                    </td>`;
+    tbody.appendChild(tr);
+  }
+  // attach events
+  document.querySelectorAll(".del").forEach(b=>b.addEventListener("click", async e=>{
+    const id = e.target.dataset.id;
+    if (!confirm("Benutzer löschen?")) return;
+    await fetch("/api/admin/delete", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({id}) });
+    loadUsers();
+  }));
+  document.querySelectorAll(".pair").forEach(b=>b.addEventListener("click", async e=>{
+    const a = e.target.dataset.id;
+    const b = prompt("Gib die ID des Partners ein (siehe erste Spalte):");
+    if (!b) return;
+    await fetch("/api/admin/setpartner", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({a: parseInt(a), b: parseInt(b)}) });
+    loadUsers();
+  }));
+}
+
+document.getElementById("addForm").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const name = e.target.name.value.trim();
+  if (!name) return alert("Name eingeben");
+  const r = await fetch("/api/admin/add", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name}) });
+  if (!r.ok) { alert("Fehler beim Hinzufügen"); return; }
+  e.target.name.value = "";
+  loadUsers();
+});
+
+document.getElementById("resetBtn").addEventListener("click", async ()=>{
+  if (!confirm("Ziehungen wirklich zurücksetzen? (Dieses Jahr wird damit gelöscht)")) return;
+  await fetch("/api/admin/reset", { method:"POST" });
+  loadUsers();
+});
+
+document.getElementById("logoutBtn").addEventListener("click", async ()=>{
+  await fetch("/api/logout", { method: "POST" });
+  window.location.href = "/";
+});
+
+loadUsers();
+</script>
+</body>
+</html>
